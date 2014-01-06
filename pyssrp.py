@@ -28,21 +28,24 @@ class ServerResponse(object):
         self._resp_type = resp_type
         
     def append(self, recv_str):
-        """Append receive and mark .isvalid/.iscomplete accordingly."""                
-        if self._resp_data is None:
-            if not recv_str[0] == SVR_RESP:
-                return
-            self.isvalid = True     
-            self._resp_size = struct.unpack('<H',recv_str[1:3])[0]
-            resp_data += recv_str[3:]
-        else:
-            self._resp_data += recv_str
+        try:
+            """Append receive and mark .isvalid/.iscomplete accordingly."""                
+            if self._resp_data is None:
+                if not recv_str[0] == SVR_RESP:
+                    return
+                self.isvalid = True     
+                self._resp_size = struct.unpack('<H',recv_str[1:3])[0]
+                self._resp_data = recv_str[3:]
+            else:
+                self._resp_data += recv_str
 
-        if len(self._resp_data) == self._resp_size:
-            self.iscomplete = True
-        
-        if len(resp_data) > self._resp_size:
-            self.isvalid = False
+            if len(self._resp_data) == self._resp_size:
+                self.iscomplete = True
+            
+            if len(self._resp_data) > self._resp_size:
+                self.isvalid = False
+        except Exception as e:
+            print("An error occurred in ServerResponse.append():\n" + str(e))
         
     def debug(self):
         """ 
@@ -74,31 +77,34 @@ class MCSQLRClient(object):
         request_options  - Tuple with additional options for type of request
         callback         - Callback function for each valid response received         
         """
-        switch = {CLNT_BCAST_EX:self.clnt_bcast_ex,
-                  CLNT_UCAST_EX:self.clnt_bcast_ex,
-                  CLNT_UCAST_INST:self.clnt_ucast_ex,
-                  CLNT_UCAST_DAC:self.clnt_ucast_dac}
+        self._req_type = req_type
+        self._server_responses = []
+        
+        switch = {CLNT_BCAST_EX:self._clnt_bcast_ex,
+                  CLNT_UCAST_EX:self._clnt_bcast_ex,
+                  CLNT_UCAST_INST:self._clnt_ucast_ex,
+                  CLNT_UCAST_DAC:self._clnt_ucast_dac}
 
         switch[req_type](*req_opt)
-        self._req_type = req_type
-        self._client.bind(self._address)
+        self._client.bind(('',0))
         self._readers = [self._client]
         self._writers = [self._client]
         self._reader_callback = callback
         self._quit = False
 
         thread = threading.Thread(target = self._cycle)
-        thread.start()                
-        
-    def clnt_bcast_ex(self):
+        thread.start()
+                
+    def _clnt_bcast_ex(self):
         """Setup request to identify database instances on a network."""
-        # TODO: This (<broadcast>) isn't going to work for IPV6
-        self._address = ('<broadcast>',1433)
+        
         self._client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # TODO: This (<broadcast>) isn't going to work for IPV6
+        self._address = ('<broadcast>',1434)        
         self._wbuff = CLNT_BCAST_EX
 
-    def clnt_ucast_ex(self, req_options):
+    def _clnt_ucast_ex(self, req_options):
         """Request to identify DB instances on a server. 
         
         Keyword argumennts:
@@ -109,7 +115,7 @@ class MCSQLRClient(object):
         self._client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self._wbuff = CLNT_UCAST_EX
         
-    def clnt_ucast_inst(self, instancename):
+    def _clnt_ucast_inst(self, instancename):
         """Request for details of a particular instance on a server.
         
         Keyword arguments:'
@@ -121,7 +127,7 @@ class MCSQLRClient(object):
         self._client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self._wbuff = CLNT_UCAST_INST + instancename
         
-    def clnt_ucast_dac(self):
+    def _clnt_ucast_dac(self):
         # TODO: Complete me if necessary...
         pass
 
@@ -166,7 +172,8 @@ class MCSQLRClient(object):
                     break
                 if server_response.iscomplete:
                     if not self._reader_callback == None:
-                        self._reader_callback(address, resp_data)
+                        self._server_responses.append(server_response)
+                        self._reader_callback()
                     break
 
         except Exception as e:
@@ -180,12 +187,9 @@ class MCSQLRClient(object):
         except Exception as e:
             print("An error occurred in Client.close():\n" + str(e))
 
-
-def callback(address, message):
-    x = ServerResponse(address, message)
-    print(len(x))
-    
-    print(x._instances)
+def callback():
+    # TODO: Iteration
+    print(len(client._server_responses))
     
 if __name__ == "__main__":
     
@@ -195,7 +199,11 @@ if __name__ == "__main__":
         req_opt=[], 
         callback=callback
     )
-
+    
     # Wait for a timeout period (in case of slow resp) before closing
     time.sleep(2)
     client.close()
+
+    # TODO: see callback, put this there
+    for response in client._server_responses:
+        print(response._resp_data + '\n')
