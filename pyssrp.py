@@ -4,16 +4,36 @@ import struct
 import threading
 import time
 
-PROTOCOLVERSION = '\01'
-CLNT_BCAST_EX = '\02'
-CLNT_UCAST_EX = '\03'
-CLNT_UCAST_INST = '\04'
-CLNT_UCAST_DAC = '\0F'
+PROTOCOLVERSION = b'\01'
+CLNT_BCAST_EX = b'\02'
+CLNT_UCAST_EX = b'\03'
+CLNT_UCAST_INST = b'\04'
+CLNT_UCAST_DAC = b'\0F'
 
-SVR_RESP = '\05'
+SVR_RESP = b'\05'
 
 class ServerResponse(object):
+    class Instance(object):
+
+        def __init__(self, inst_data):
+            """ Build a SQL Server instance object given raw data or elements. """
+            self._inst_data = inst_data 
+            self._inst_dict = {}
+            
+            self._inst_data = inst_data
+
+            elements = self._inst_data.split(';')
+            # Each element is separated by a single colon; come in pairs.
+            for i in range(0, len(elements)-2, 2):
+                self._inst_dict[elements[i]] = elements[i+1]
     
+        def __getitem__(self, s):
+            """ Returns element in inst dictionary or None if key is not found. """
+            ret = None
+            if s in self._inst_dict:
+                ret = self._inst_dict[s]
+            return ret
+        
     def __init__(self, resp_type=None):
         
         # TODO: There is a lot of additional verification we could be 
@@ -26,12 +46,12 @@ class ServerResponse(object):
         self._resp_data = None
         self._resp_size = None
         self._resp_type = resp_type
-        
+    
     def append(self, recv_str):
         try:
             """Append receive and mark .isvalid/.iscomplete accordingly."""                
             if self._resp_data is None:
-                if not recv_str[0] == SVR_RESP:
+                if not recv_str[0:1] == SVR_RESP:
                     return
                 self.isvalid = True     
                 self._resp_size = struct.unpack('<H',recv_str[1:3])[0]
@@ -41,29 +61,28 @@ class ServerResponse(object):
 
             if len(self._resp_data) == self._resp_size:
                 self.iscomplete = True
+                self._instances = self.get_instances()
             
             if len(self._resp_data) > self._resp_size:
                 self.isvalid = False
+        
         except Exception as e:
             print("An error occurred in ServerResponse.append():\n" + str(e))
-        
-    def debug(self):
+
+    def get_instances(self):
         """ 
         This will be expanded to handle separating elements of a 
         response into individually accessible variables.
         """
-        self._instances = []
-        # Instances are separated by a double colon. The full message
-        # also happens to end in a double colon we don't care to see.
-        raw_instances = response[:-2].split(';;')
-        for raw_instance in raw_instances:
-            elements = raw_instance.split(';')
-            details = {}
-            # Each element is separated by a single colon; come in paris.
-            for i in range(0, len(elements)-2, 2):
-                details[elements[i]] = elements[i+1]
-            self._instances.append(details)
-            
+        instances = []
+        # Instances are separated by a double semicolon. The full message
+        # also happens to end in a double semicolon which we don't care to see.
+        raw_instances = self._resp_data[:-2].split(';;')
+        for rinst in raw_instances:
+            instances.append(self.Instance(rinst))
+
+        return instances
+
     def __len__(self):
         return len(self._instances)
         
@@ -81,7 +100,7 @@ class MCSQLRClient(object):
         self._server_responses = []
         
         switch = {CLNT_BCAST_EX:self._clnt_bcast_ex,
-                  CLNT_UCAST_EX:self._clnt_bcast_ex,
+                  CLNT_UCAST_EX:self._clnt_ucast_ex,
                   CLNT_UCAST_INST:self._clnt_ucast_ex,
                   CLNT_UCAST_DAC:self._clnt_ucast_dac}
 
@@ -142,20 +161,23 @@ class MCSQLRClient(object):
                     self._senddata(writer)
                     
         except Exception as e:
-            print "An error occurred in Client.cycle()\n" + str(e) 
+            print("An error occurred in Client.cycle()\n" + str(e)) 
         
     def _senddata(self, writer):
-        """ Send data in the write buffer without any verification. """        
-        sentcount = 0
-        bufferlen = len(self._wbuff)
-        while sentcount < bufferlen:
-            sent = self._client.sendto(self._wbuff[sentcount:], self._address)
-            if sent == 0:
-                raise RuntimeError("socket connection broken")
-            sentcount += sent
-            if sentcount == bufferlen:
-                self._wbuff = ''
-                self._writers.remove(writer)
+        """ Send data in the write buffer without any verification. """       
+        try: 
+            sentcount = 0
+            bufferlen = len(self._wbuff)
+            while sentcount < bufferlen:
+                sent = self._client.sendto(self._wbuff[sentcount:], self._address)
+                if sent == 0:
+                    raise RuntimeError("socket connection broken")
+                sentcount += sent
+                if sentcount == bufferlen:
+                    self._wbuff = b''
+                    self._writers.remove(writer)
+        except Exception as e:
+            print("An error occurred in Client._senddata()\n" + str(e))
             
     def _recvdata(self):
         """Receive responses from a SSRP broadcast request."""
@@ -189,10 +211,10 @@ class MCSQLRClient(object):
 
 def callback():
     # TODO: Iteration
-    print(len(client._server_responses))
+    pass
+#    print(len(client._server_responses))
     
-if __name__ == "__main__":
-    
+if __name__ == "__main__":    
     # Create client and listen for incoming responses
     client = MCSQLRClient(
         req_type=CLNT_BCAST_EX, 
@@ -206,4 +228,12 @@ if __name__ == "__main__":
 
     # TODO: see callback, put this there
     for response in client._server_responses:
-        print(response._resp_data + '\n')
+        print("\n\tServer Name: {0} (contains {1} instances)".format(
+                response._instances[0]['ServerName'], len(response)))
+        for instance in response._instances:
+            print("\tInstance: \t{0}".format(instance['InstanceName']))
+            print("\t   Version: \t{0}".format(instance['Version']))
+            print("\t   IsClustered: {0}".format(instance['IsClustered']))
+            print("\t   TCP Port: \t{0}".format(instance['tcp']))
+
+     
