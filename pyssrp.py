@@ -1,6 +1,8 @@
+#!/usr/bin/env python
 import select
 import socket
 import struct
+import sys
 import threading
 import time
 
@@ -11,6 +13,23 @@ CLNT_UCAST_INST = b'\04'
 CLNT_UCAST_DAC = b'\0F'
 
 SVR_RESP = b'\05'
+
+
+class MCSQLRServer(object):
+    def __init__(self):
+        backlog = 5 
+        size = 1024 
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.s.bind(('',1434)) 
+        while True: 
+            # TODO: What is the maximum size of a receipt?
+            data, address = self.s.recvfrom(1024) 
+            if data: 
+                #client.send(data) 
+                print('Received from '+ address[0])
+		resp = 'ServerName;ILSUNG1;InstanceName;YUKONSTD;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
+		print(len(resp))
+                self.s.sendto(SVR_RESP + b'\x48\x01' + resp, address) 
 
 class ServerResponse(object):
     class Instance(object):
@@ -56,13 +75,19 @@ class ServerResponse(object):
                 self.isvalid = True     
                 self._resp_size = struct.unpack('<H',recv_str[1:3])[0]
                 self._resp_data = recv_str[3:]
-            else:
+		
+		print(self._resp_data)
+            
+	    else:
                 self._resp_data += recv_str
 
             if len(self._resp_data) == self._resp_size:
                 self.iscomplete = True
                 self._instances = self.get_instances()
-            
+	    else:
+		print("not complete")
+		print("received len: " + str(len(self._resp_data)) + " expected len: " + str(self._resp_size))
+
             if len(self._resp_data) > self._resp_size:
                 self.isvalid = False
         
@@ -215,25 +240,33 @@ def callback():
 #    print(len(client._server_responses))
     
 if __name__ == "__main__":    
-    # Create client and listen for incoming responses
-    client = MCSQLRClient(
-        req_type=CLNT_BCAST_EX, 
-        req_opt=[], 
-        callback=callback
-    )
     
-    # Wait for a timeout period (in case of slow resp) before closing
-    time.sleep(2)
-    client.close()
+    if '--server' in sys.argv:
+        print('yes, server is in there')
+        server = MCSQLRServer()
+    
 
-    # TODO: see callback, put this there
-    for response in client._server_responses:
-        print("\n\tServer Name: {0} (contains {1} instances)".format(
-                response._instances[0]['ServerName'], len(response)))
-        for instance in response._instances:
-            print("\tInstance: \t{0}".format(instance['InstanceName']))
-            print("\t   Version: \t{0}".format(instance['Version']))
-            print("\t   IsClustered: {0}".format(instance['IsClustered']))
-            print("\t   TCP Port: \t{0}".format(instance['tcp']))
+    else:
+    
+        # Create client and listen for incoming responses
+        client = MCSQLRClient(
+            req_type=CLNT_BCAST_EX, 
+            req_opt=[], 
+            callback=callback
+        )
+        
+        # Wait for a timeout period (in case of slow resp) before closing
+        time.sleep(2)
+        client.close()
+    
+        # TODO: see callback, put this there
+        for response in client._server_responses:
+            print("\n\tServer Name: {0} (contains {1} instances)".format(
+                    response._instances[0]['ServerName'], len(response)))
+            for instance in response._instances:
+                print("\tInstance: \t{0}".format(instance['InstanceName']))
+                print("\t   Version: \t{0}".format(instance['Version']))
+                print("\t   IsClustered: {0}".format(instance['IsClustered']))
+                print("\t   TCP Port: \t{0}".format(instance['tcp']))
 
      
