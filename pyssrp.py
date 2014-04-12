@@ -16,20 +16,33 @@ SVR_RESP = b'\05'
 
 
 class MCSQLRServer(object):
+
+    _resp_dict = {
+        CLNT_BCAST_EX: "CLNT_BCAST_EX",
+        #CLNT_UCAST_EX: "CLNT_UCAST_EX",
+        #CLNT_UCAST_INST: "CLNT_UCAST_INST",
+        #CLNT_UCAST_DAC: "CLNT_UCAST_DAC"
+    }
+		
+
     def __init__(self):
         backlog = 5 
         size = 1024 
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.bind(('',1434)) 
+        self.s.bind(('',1434))
+ 
         while True: 
             # TODO: What is the maximum size of a receipt?
             data, address = self.s.recvfrom(1024) 
-            if data: 
-                #client.send(data) 
-                print('Received from '+ address[0])
-		resp = 'ServerName;ILSUNG1;InstanceName;YUKONSTD;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
-		print(len(resp))
-                self.s.sendto(SVR_RESP + b'\x48\x01' + resp, address) 
+            if data:
+                self._req_type = data[0:1]
+                if not self._req_type in self._resp_dict: 
+                    print("Unsupported request")
+                    return
+
+                print('Received ' + self._resp_dict[self._req_type] + ' from '+ address[0])
+                resp = 'ServerName;ILSUNG1;InstanceName;YUKONsssithis_is_a_really_long_test;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
+                self.s.sendto(SVR_RESP + struct.pack('<H', len(resp)) + resp, address) 
 
 class ServerResponse(object):
     class Instance(object):
@@ -75,18 +88,13 @@ class ServerResponse(object):
                 self.isvalid = True     
                 self._resp_size = struct.unpack('<H',recv_str[1:3])[0]
                 self._resp_data = recv_str[3:]
-		
-		print(self._resp_data)
-            
-	    else:
+
+            else:
                 self._resp_data += recv_str
 
             if len(self._resp_data) == self._resp_size:
                 self.iscomplete = True
                 self._instances = self.get_instances()
-	    else:
-		print("not complete")
-		print("received len: " + str(len(self._resp_data)) + " expected len: " + str(self._resp_size))
 
             if len(self._resp_data) > self._resp_size:
                 self.isvalid = False
