@@ -17,32 +17,42 @@ SVR_RESP = b'\05'
 
 class MCSQLRServer(object):
 
-    _resp_dict = {
-        CLNT_BCAST_EX: "CLNT_BCAST_EX",
-        #CLNT_UCAST_EX: "CLNT_UCAST_EX",
-        #CLNT_UCAST_INST: "CLNT_UCAST_INST",
-        #CLNT_UCAST_DAC: "CLNT_UCAST_DAC"
-    }
-		
-
     def __init__(self):
-        backlog = 5 
-        size = 1024 
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.s.bind(('',1434))
- 
-        while True: 
-            # TODO: What is the maximum size of a receipt?
-            data, address = self.s.recvfrom(1024) 
-            if data:
-                self._req_type = data[0:1]
-                if not self._req_type in self._resp_dict: 
-                    print("Unsupported request")
-                    return
 
-                print('Received ' + self._resp_dict[self._req_type] + ' from '+ address[0])
-                resp = 'ServerName;ILSUNG1;InstanceName;YUKONsssithis_is_a_really_long_test;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
-                self.s.sendto(SVR_RESP + struct.pack('<H', len(resp)) + resp, address) 
+        switch = {CLNT_BCAST_EX:['CLNT_BCAST_EX', self._svr_resp],
+                  CLNT_UCAST_EX:['CLNT_UCAST_EX', self._svr_resp],
+                  CLNT_UCAST_INST:['CLNT_UCAST_INST', self._svr_resp],
+                  CLNT_UCAST_DAC:['CLNT_UCAST_DAC', self._svr_resp_dac]}
+
+
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.bind(('',1434))
+        
+        self._sTime = time.strftime('%Y-%m-%d %H:%m:%S ') 
+        print(self._sTime + 'WAITING FOR REQUEST FROM CLIENT')
+
+        while True: 
+            # TODO: What is the maximum size?
+            data, address = self._sock.recvfrom(1024) 
+            if data:
+                self._sTime = time.strftime('%Y-%m-%d %H:%m:%S ') 
+                req_type = data[0:1]
+                if not req_type in switch: 
+                    print(self._sTime + 'Unknown request from ' + address[0])
+                    return
+                
+                print(self._sTime + 'Received ' + switch[req_type][0] + ' from ' + address[0])
+                req_opt = [address]
+                switch[req_type][1](*req_opt)
+
+    def _svr_resp(self, address):
+        resp_data = 'ServerName;ILSUNG1;InstanceName;YUKONsssithis_is_a_really_long_test;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
+        resp_size = struct.pack('<H', len(resp_data))
+        self._sock.sendto(SVR_RESP + resp_size + resp_data, address) 
+
+    def _svr_resp_dac(self):
+        print("* Not supported")
+        pass
 
 class ServerResponse(object):
     class Instance(object):
