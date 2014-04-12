@@ -53,7 +53,7 @@ class ServerResponse(object):
             self._inst_dict = {}
             
             self._inst_data = inst_data
-
+            
             elements = self._inst_data.split(';')
             # Each element is separated by a single colon; come in pairs.
             for i in range(0, len(elements)-2, 2):
@@ -112,7 +112,9 @@ class ServerResponse(object):
         # also happens to end in a double semicolon which we don't care to see.
         raw_instances = self._resp_data[:-2].split(';;')
         for rinst in raw_instances:
-            instances.append(self.Instance(rinst))
+            # We have to add back a semicolon to our rinst string or the
+            # Instance() init splits by semicolon missing the last element.
+            instances.append(self.Instance(rinst + ';'))
 
         return instances
 
