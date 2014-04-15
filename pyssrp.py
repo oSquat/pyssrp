@@ -32,7 +32,6 @@ class MCSQLRServer(object):
         print(self._sTime + 'WAITING FOR REQUEST FROM CLIENT')
 
         while True: 
-            # TODO: What is the maximum size?
             data, address = self._sock.recvfrom(1024) 
             if data:
                 self._sTime = time.strftime('%Y-%m-%d %H:%m:%S ') 
@@ -40,13 +39,16 @@ class MCSQLRServer(object):
                 if not req_type in switch: 
                     print(self._sTime + 'Unknown request from ' + address[0])
                     return
-                
+                 
                 print(self._sTime + 'Received ' + switch[req_type][0] + ' from ' + address[0])
                 req_opt = [address]
                 switch[req_type][1](*req_opt)
 
     def _svr_resp(self, address):
-        resp_data = 'ServerName;ILSUNG1;InstanceName;YUKONsssithis_is_a_really_long_test;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
+        # TODO: 2.2.5: resp_data MUST be of size:
+        #   CLNT_UCAST_INST - 1024
+        #   CLNT_BCAST/UCAST_EX - 65535 
+        resp_data = 'ServerName;ILSUNG1;InstanceName;YUKON;IsClustered;No;Version;9.00.1399.06;tcp;57137;;ServerName;ILSUNG1;InstanceName;YUKONDEV;IsClustered;No;Version;9.00.1399.06;np;\\\\ILSUNG1\\pipe\\MSSQL$YUKONDEV\\sql\\query;;ServerName;ILSUNG1;InstanceName;MSSQLSERVER;IsClustered;No;Version;9.00.1399.06;tcp;1433;np;\\\\ILSUNG1\\pipe\\sql1\\query;;'
         resp_size = struct.pack('<H', len(resp_data))
         self._sock.sendto(SVR_RESP + resp_size + resp_data, address) 
 
@@ -59,25 +61,36 @@ class ServerResponse(object):
 
         def __init__(self, inst_data):
             """ Build a SQL Server instance object given raw data or elements. """
-            self._inst_data = inst_data 
-            self._inst_dict = {}
-            
+            self._attributes = {}
             self._inst_data = inst_data
             
-            elements = self._inst_data.split(';')
-            # Each element is separated by a single colon; come in pairs.
-            for i in range(0, len(elements)-2, 2):
-                self._inst_dict[elements[i]] = elements[i+1]
-    
+            # TODO: Split this off to its own internal function. 
+            # Add opposite of __getitem__ so we can manually build an
+            # instance... figure out where this and the ServerResponse 
+            # goes in relation to both the client and server.
+
+
+            token_nvpairs = self._inst_data.split(';')
+            # Each Token Name/Value pair is separated by a single colon.
+            for i in range(0, len(token_nvpairs), 2):
+                # TODO?: I'm afraid this is pretty loose. 
+                # Section 2.2.5 SVR_RESP seems to indicate that some tokens 
+                # may contain additional parameters like so: name;value;params,
+                # but this section seems kind of ambiguious and stops short at
+                # actually spelling out what a server response should be. I 
+                # haven't encountered a problem with this simplified approach, 
+                # but that's not surpring given my limited needs.
+                self._attributes[token_nvpairs[i]] = token_nvpairs[i+1]
+
         def __getitem__(self, s):
             """ Returns element in inst dictionary or None if key is not found. """
             ret = None
-            if s in self._inst_dict:
-                ret = self._inst_dict[s]
+            if s in self._attributes:
+                ret = self._attributes[s]
             return ret
-        
-    def __init__(self, resp_type=None):
-        
+ 
+    def __init__(self, svr_resp=None):
+        """Initialize a server; accept raw svr_resp string if you have it.""" 
         # TODO: There is a lot of additional verification we could be 
         # doing per type of response expected.
         
@@ -87,18 +100,25 @@ class ServerResponse(object):
         self._address = None
         self._resp_data = None
         self._resp_size = None
-        self._resp_type = resp_type
+
+        if not svr_resp == None:
+            self.append(svr_resp)
     
-    def append(self, recv_str):
+    def append(self, recv_str): 
+        """Accumulate socket.recv data from an SVR_RESP. 
+
+        Validate server response (SVR_RESP) string. Designed to work with 
+        possibly fragmented response from socket.recv*. The 
+        .isvalid/.iscomplete values will be marked accordingly and if complete
+        .get_instances() is called to split instances.
+        """
         try:
-            """Append receive and mark .isvalid/.iscomplete accordingly."""                
             if self._resp_data is None:
-                if not recv_str[0:1] == SVR_RESP:
+                if not recv_str[0:1] == SVR_RESP: 
                     return
                 self.isvalid = True     
-                self._resp_size = struct.unpack('<H',recv_str[1:3])[0]
+                self._resp_size = struct.unpack('<H', recv_str[1:3])[0]
                 self._resp_data = recv_str[3:]
-
             else:
                 self._resp_data += recv_str
 
@@ -112,7 +132,7 @@ class ServerResponse(object):
         except Exception as e:
             print("An error occurred in ServerResponse.append():\n" + str(e))
 
-    def get_instances(self):
+    def get_instances(self): 
         """ 
         This will be expanded to handle separating elements of a 
         response into individually accessible variables.
@@ -122,9 +142,7 @@ class ServerResponse(object):
         # also happens to end in a double semicolon which we don't care to see.
         raw_instances = self._resp_data[:-2].split(';;')
         for rinst in raw_instances:
-            # We have to add back a semicolon to our rinst string or the
-            # Instance() init splits by semicolon missing the last element.
-            instances.append(self.Instance(rinst + ';'))
+            instances.append(self.Instance(rinst))
 
         return instances
 
@@ -142,7 +160,7 @@ class MCSQLRClient(object):
         callback         - Callback function for each valid response received         
         """
         self._req_type = req_type
-        self._server_responses = []
+        self.server_responses = []
         
         switch = {CLNT_BCAST_EX:self._clnt_bcast_ex,
                   CLNT_UCAST_EX:self._clnt_ucast_ex,
@@ -182,7 +200,7 @@ class MCSQLRClient(object):
     def _clnt_ucast_inst(self, instancename):
         """Request for details of a particular instance on a server.
         
-        Keyword arguments:'
+        Keyword arguments:
         address -- tuple containing address and port to query
         instance -- string name of instance to query
         """
@@ -236,10 +254,17 @@ class MCSQLRClient(object):
                     raise RuntimeError("socket connection broken")
                 server_response.append(recv_str)
                 if not server_response.isvalid:
+                    # TODO: 3.2.5.4 Waiting Completed 
+                    # Only CLNT_BCAST_EX ignores invalid messages
+                    # if not self._req_type == CLNT_BCAST_EX:
+                    #   raise SomeError(...)
                     break
                 if server_response.iscomplete:
                     if not self._reader_callback == None:
-                        self._server_responses.append(server_response)
+                        # This is actually a violation of the RFC.
+                        # 3.2.5.4 Waiting Completed states a client SHOULD 
+                        # buffer all responses until timer has timed out.
+                        self.server_responses.append(server_response)
                         self._reader_callback()
                     break
 
@@ -262,9 +287,7 @@ def callback():
 if __name__ == "__main__":    
     
     if '--server' in sys.argv:
-        print('yes, server is in there')
         server = MCSQLRServer()
-    
 
     else:
     
@@ -280,7 +303,7 @@ if __name__ == "__main__":
         client.close()
     
         # TODO: see callback, put this there
-        for response in client._server_responses:
+        for response in client.server_responses:
             print("\n\tServer Name: {0} (contains {1} instances)".format(
                     response._instances[0]['ServerName'], len(response)))
             for instance in response._instances:
